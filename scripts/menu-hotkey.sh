@@ -7,7 +7,7 @@
 set -euo pipefail
 
 KEY="${1:-<Super>}"
-CMD="${HOME}/.local/bin/win10startmenu"
+CMD="${HOME}/.local/bin/metromenu"
 CHANNEL="xfce4-keyboard-shortcuts"
 PROP="/commands/custom/$KEY"
 

@@ -4,13 +4,13 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
-if [[ -n "${W10SM_HOME:-}" && -d "${W10SM_HOME}/win10startmenu" ]]; then
-    ROOT="${W10SM_HOME}"
-elif [[ -d "${HERE}/win10startmenu" ]]; then
+if [[ -n "${METROMENU_HOME:-}" && -d "${METROMENU_HOME}/metromenu" ]]; then
+    ROOT="${METROMENU_HOME}"
+elif [[ -d "${HERE}/metromenu" ]]; then
     ROOT="${HERE}"
 else
     ROOT="$(cd "${HERE}/.." && pwd)"
 fi
 
 export PYTHONPATH="${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
-exec python3 -m win10startmenu "$@"
+exec python3 -m metromenu "$@"

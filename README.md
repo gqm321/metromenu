@@ -1,4 +1,4 @@
-# Win10 Start Menu for Xfce
+# Metro Menu for Xfce
 
 一个在 Xfce 桌面上运行的、仿 Windows 10 的经典开始菜单：左侧应用列表，右侧
 Metro 磁贴，无边框窗口，支持搜索、磁贴缩放/换色/分组、实时磁贴和电源操作。
@@ -24,7 +24,7 @@ Metro 磁贴，无边框窗口，支持搜索、磁贴缩放/换色/分组、实
   （等同 Whisker，出现在“添加新项目”里），还可绑定键盘快捷键（如 `Super`）唤醒。
 - **无边框窗口**：`decorated=False`，锚定屏幕工作区左下角，点击外部自动关闭，
   再次触发则切换显示/隐藏。
-- **可配置**：布局保存在 `~/.config/win10startmenu/config.json`（纯 JSON）。
+- **可配置**：布局保存在 `~/.config/metromenu/config.json`（纯 JSON）。
 
 ## 右键菜单
 
@@ -72,22 +72,22 @@ Whisker 之所以“秒开”，是因为它常驻面板进程、在**后台线�
 
 1. **先显示后填充**：窗口先 map/绘制（只剩竖栏与搜索框），应用列表与磁贴随后在
    `GLib.idle_add` 里填充 —— 首帧 ~0.39s，内容再花 ~50ms 出现。
-2. **应用列表落盘缓存**：解析结果缓存在 `~/.cache/win10startmenu/apps.json`。
-3. **图标落盘缓存**：渲染后的图标 PNG 缓存在 `~/.cache/win10startmenu/icons/`
+2. **应用列表落盘缓存**：解析结果缓存在 `~/.cache/metromenu/apps.json`。
+3. **图标落盘缓存**：渲染后的图标 PNG 缓存在 `~/.cache/metromenu/icons/`
    （20 个图标从 ~100ms 降到 ~5ms）。
 
 **缓存如何失效（安装新软件会自动重扫）**：缓存里存有一份 `.desktop` 文件的指纹
 ——对每个文件记录 `路径 + mtime + 大小` 后取 SHA1。**安装、卸载或原地修改**任何
 `.desktop` 都会改变指纹，下次打开菜单即触发重新扫描（仅 stat 文件，不解析，实测
-~10ms）。此外还带 7 天 TTL 兜底。想强制重扫可用 `win10startmenu --no-cache`。
+~10ms）。此外还带 7 天 TTL 兜底。想强制重扫可用 `metromenu --no-cache`。
 
 
 
 ## 目录结构
 
 ```
-win10startmenu/
-├── win10startmenu/          # Python 包
+metromenu/
+├── metromenu/          # Python 包
 │   ├── application.py       # Gtk.Application / 单实例切换
 │   ├── window.py            # 无边框开始菜单窗口与交互
 │   ├── apps.py              # freedesktop 应用发现、搜索、启动
@@ -97,7 +97,7 @@ win10startmenu/
 │   └── style.css            # Metro 主题
 ├── assets/                  # 图标（SVG + 多尺寸 PNG）
 ├── data/                    # .desktop 模板
-├── bin/win10startmenu       # 源码树内可直接运行的启动器
+├── bin/metromenu       # 源码树内可直接运行的启动器
 ├── panel-plugin/            # 原生 Xfce 面板插件（C 源码 + 描述文件）
 ├── scripts/                 # 安装 / 卸载 / 面板集成 / 快捷键
 └── reference/whiskermenu/   # 参考用的 whisker 源码（git clone）
@@ -118,7 +118,7 @@ sudo apt install python3-gi gir1.2-gtk-3.0
 ## 直接运行（源码树）
 
 ```bash
-./bin/win10startmenu
+./bin/metromenu
 ```
 
 ## 安装到用户目录
@@ -132,10 +132,10 @@ sudo apt install python3-gi gir1.2-gtk-3.0
 
 安装脚本会写入：
 
-- `~/.local/share/win10startmenu/`（程序）
-- `~/.local/bin/win10startmenu`（命令包装器）
-- `~/.local/share/applications/win10startmenu.desktop`
-- `~/.local/share/icons/hicolor/*/apps/win10startmenu.png|svg`
+- `~/.local/share/metromenu/`（程序）
+- `~/.local/bin/metromenu`（命令包装器）
+- `~/.local/share/applications/metromenu.desktop`
+- `~/.local/share/icons/hicolor/*/apps/metromenu.png|svg`
 
 ## 面板集成原理
 
@@ -155,9 +155,9 @@ sudo apt install libgtk-3-dev libxfce4panel-2.0-dev
 ./scripts/install-panel-plugin.sh --add    # 顺便插入 panel-1 最左侧并重启面板
 ```
 
-`panel-plugin/win10startmenu-plugin.c` 是一个约 120 行的 C 插件：面板按钮点击时，
+`panel-plugin/metromenu-plugin.c` 是一个约 120 行的 C 插件：面板按钮点击时，
 若已有实例则通过 D-Bus（`org.gtk.Application.Activate`）让其切换，否则启动
-`win10startmenu --anchor=x,y,w,h`，把菜单锚定到按钮旁边（面板在下→弹在按钮上方）。
+`metromenu --anchor=x,y,w,h`，把菜单锚定到按钮旁边（面板在下→弹在按钮上方）。
 装好后它也会出现在面板的 *添加新项目* 列表里。
 
 ### 方式二：Launcher 按钮（无需编译）
@@ -172,7 +172,7 @@ Xfce 面板的 Launcher 插件把每个按钮存成
 ```
 
 `scripts/integrate-panel.sh` 会找到空闲插件 ID `N`，创建 `launcher-N/` 目录并写入
-一个 `Exec=win10startmenu` 的桌面项，注册 `plugin-N` 并插到 plugin-ids 最前面，
+一个 `Exec=metromenu` 的桌面项，注册 `plugin-N` 并插到 plugin-ids 最前面，
 最后 `xfce4-panel --restart`。
 
 因为程序是单实例 `Gtk.Application`，再次点击按钮会切换显示/隐藏。
@@ -195,7 +195,7 @@ xfwm4 或 Whisker 菜单占用。
 
 ## 配置示例
 
-`~/.config/win10startmenu/config.json`：
+`~/.config/metromenu/config.json`：
 
 ```json
 {

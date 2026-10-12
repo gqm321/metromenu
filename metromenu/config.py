@@ -1,6 +1,6 @@
 """Configuration handling for the Windows 10 style start menu.
 
-The configuration lives in ``$XDG_CONFIG_HOME/win10startmenu/config.json`` and
+The configuration lives in ``$XDG_CONFIG_HOME/metromenu/config.json`` and
 stores the layout of the tile area, the pinned applications and a few visual
 settings.  Everything is treated as user editable - the file is plain JSON.
 """
@@ -12,7 +12,7 @@ import json
 import os
 from pathlib import Path
 
-APP_NAME = "win10startmenu"
+APP_NAME = "metromenu"
 
 _CONF_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
 CONFIG_FILE = Path(_CONF_HOME) / APP_NAME / "config.json"

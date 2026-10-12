@@ -19,7 +19,7 @@ from .window import StartMenuWindow  # noqa: E402
 
 timing.log("modules imported")
 
-APP_ID = "org.xfce.win10startmenu"
+APP_ID = "org.metromenu.MetroMenu"
 STYLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "style.css")
 
 
@@ -51,7 +51,7 @@ class StartMenuApplication(Gtk.Application):
         try:
             provider.load_from_path(STYLE_PATH)
         except GLib.Error as error:
-            print(f"win10startmenu: could not load style sheet: {error}", file=sys.stderr)
+            print(f"metromenu: could not load style sheet: {error}", file=sys.stderr)
             return
         screen = Gdk.Screen.get_default()
         if screen is not None:

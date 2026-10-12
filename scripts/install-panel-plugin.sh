@@ -5,17 +5,17 @@
 #   --add    also insert the plugin into panel 1 (leftmost) and restart it
 #
 # The plugin is installed user-locally, so no root is needed:
-#   module     -> ~/.local/lib/<multiarch>/xfce4/panel/plugins/libwin10startmenu.so
-#   descriptor -> ~/.local/share/xfce4/panel/plugins/win10startmenu.desktop
+#   module     -> ~/.local/lib/<multiarch>/xfce4/panel/plugins/libmetromenu.so
+#   descriptor -> ~/.local/share/xfce4/panel/plugins/metromenu.desktop
 #
 # Building requires the development headers:
 #   sudo apt install libgtk-3-dev libxfce4panel-2.0-dev
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PLUGIN_SRC="$SRC/panel-plugin/win10startmenu-plugin.c"
-DESCRIPTOR="$SRC/panel-plugin/win10startmenu.desktop"
-MODULE_NAME="win10startmenu"
+PLUGIN_SRC="$SRC/panel-plugin/metromenu-plugin.c"
+DESCRIPTOR="$SRC/panel-plugin/metromenu.desktop"
+MODULE_NAME="metromenu"
 MODULE="lib${MODULE_NAME}.so"
 
 WANT_ADD=0

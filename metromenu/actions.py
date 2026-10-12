@@ -141,7 +141,7 @@ def add_launcher_to_panel(desktop_file: Path, panel: int = 1) -> bool:
     launcher_dir = Path.home() / ".config/xfce4/panel" / f"launcher-{plugin_id}"
     try:
         launcher_dir.mkdir(parents=True, exist_ok=True)
-        item_name = f"w10sm-{int(time.time())}-{os.getpid()}.desktop"
+        item_name = f"metromenu-{int(time.time())}-{os.getpid()}.desktop"
         shutil.copyfile(desktop_file, launcher_dir / item_name)
     except OSError:
         return False

@@ -1,6 +1,6 @@
 """Tiny opt-in startup profiler.
 
-Set ``W10SM_TIMING=1`` in the environment to print phase timings to stderr.
+Set ``METROMENU_TIMING=1`` in the environment to print phase timings to stderr.
 """
 
 from __future__ import annotations
@@ -10,13 +10,13 @@ import sys
 import time
 
 _T0 = time.perf_counter()
-ENABLED = bool(os.environ.get("W10SM_TIMING"))
+ENABLED = bool(os.environ.get("METROMENU_TIMING"))
 
 
 def log(message: str) -> None:
     if ENABLED:
         elapsed = (time.perf_counter() - _T0) * 1000.0
-        print(f"[win10startmenu] {elapsed:8.1f} ms  {message}", file=sys.stderr, flush=True)
+        print(f"[metromenu] {elapsed:8.1f} ms  {message}", file=sys.stderr, flush=True)
 
 
 def since() -> float:

@@ -29,7 +29,7 @@ FALLBACK_ICONS = [
 
 _ICON_CACHE_VERSION = 1
 _CACHE_HOME = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
-CACHE_DIR = Path(_CACHE_HOME) / "win10startmenu" / "icons"
+CACHE_DIR = Path(_CACHE_HOME) / "metromenu" / "icons"
 
 _cache: dict[tuple[str, int], GdkPixbuf.Pixbuf | None] = {}
 

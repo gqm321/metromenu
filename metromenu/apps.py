@@ -32,7 +32,7 @@ from gi.repository import Gio, GLib  # noqa: E402
 CACHE_VERSION = 2
 CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 _CACHE_HOME = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
-CACHE_FILE = Path(_CACHE_HOME) / "win10startmenu" / "apps.json"
+CACHE_FILE = Path(_CACHE_HOME) / "metromenu" / "apps.json"
 
 
 TERMINALS = [

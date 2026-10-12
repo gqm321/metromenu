@@ -4,14 +4,14 @@
 # Usage:  ./scripts/uninstall.sh [--panel] [--hotkey] [--purge]
 #   --panel    remove the panel launcher button (if present)
 #   --hotkey   remove keyboard shortcut(s) pointing at the menu
-#   --purge    also delete the saved layout (~/.config/win10startmenu)
+#   --purge    also delete the saved layout (~/.config/metromenu)
 set -euo pipefail
 
 PREFIX="${PREFIX:-$HOME/.local}"
 SHARE="$PREFIX/share"
-APP_DIR="$SHARE/win10startmenu"
+APP_DIR="$SHARE/metromenu"
 BIN_DIR="$PREFIX/bin"
-BIN="$BIN_DIR/win10startmenu"
+BIN="$BIN_DIR/metromenu"
 PANEL_DIR="${HOME}/.config/xfce4/panel"
 CHANNEL="xfce4-panel"
 
@@ -47,7 +47,7 @@ remove_panel_button() {
     while IFS= read -r line; do
         local id="${line#/plugins/plugin-}"
         [[ "$id" =~ ^[0-9]+$ ]] || continue
-        if [[ "$(xfconf-query -c "$CHANNEL" -p "/plugins/plugin-$id" -v 2>/dev/null)" == "win10startmenu" ]]; then
+        if [[ "$(xfconf-query -c "$CHANNEL" -p "/plugins/plugin-$id" -v 2>/dev/null)" == "metromenu" ]]; then
             drop_plugin_id "$id"
             xfconf-query -c "$CHANNEL" -p "/plugins/plugin-$id" -r -R >/dev/null 2>&1 || true
             removed=1
@@ -90,24 +90,24 @@ remove_hotkeys() {
 
 rm -rf "$APP_DIR"
 rm -f "$BIN"
-rm -f "$SHARE/applications/win10startmenu.desktop"
+rm -f "$SHARE/applications/metromenu.desktop"
 for size in 16 22 24 32 48 64 128 256; do
-    rm -f "$SHARE/icons/hicolor/${size}x${size}/apps/win10startmenu.png"
+    rm -f "$SHARE/icons/hicolor/${size}x${size}/apps/metromenu.png"
 done
-rm -f "$SHARE/icons/hicolor/scalable/apps/win10startmenu.svg"
+rm -f "$SHARE/icons/hicolor/scalable/apps/metromenu.svg"
 
 # Native panel plugin module + descriptor.
-find "$HOME/.local" -path "*/xfce4/panel/plugins/libwin10startmenu.so" -delete 2>/dev/null || true
-rm -f "$HOME/.local/share/xfce4/panel/plugins/win10startmenu.desktop"
+find "$HOME/.local" -path "*/xfce4/panel/plugins/libmetromenu.so" -delete 2>/dev/null || true
+rm -f "$HOME/.local/share/xfce4/panel/plugins/metromenu.desktop"
 
 # Startup caches (application list + rendered icons).
-rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/win10startmenu"
+rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/metromenu"
 
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$SHARE/applications" >/dev/null 2>&1 || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t -f "$SHARE/icons/hicolor" >/dev/null 2>&1 || true
 
 if [[ "$WANT_PURGE" == "1" ]]; then
-    rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/win10startmenu"
+    rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/metromenu"
     echo "Removed saved layout."
 fi
 

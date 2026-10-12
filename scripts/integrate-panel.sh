@@ -4,12 +4,12 @@
 # Usage:  ./scripts/integrate-panel.sh [PANEL_NUMBER]
 #
 # The script creates a new "launcher" panel plugin whose single item runs the
-# win10startmenu command, and inserts it as the first item of the panel so it
+# metromenu command, and inserts it as the first item of the panel so it
 # behaves like the Windows "Start" button.
 set -euo pipefail
 
 PANEL="${1:-1}"
-BIN="${HOME}/.local/bin/win10startmenu"
+BIN="${HOME}/.local/bin/metromenu"
 PANEL_DIR="${HOME}/.config/xfce4/panel"
 CHANNEL="xfce4-panel"
 
@@ -35,7 +35,7 @@ new_id=$((max_id + 1))
 # Create the launcher item inside launcher-<plugin-id>/.
 launcher_dir="$PANEL_DIR/launcher-$new_id"
 mkdir -p "$launcher_dir"
-item="w10sm-$(date +%s)-$$.desktop"
+item="metromenu-$(date +%s)-$$.desktop"
 cat > "$launcher_dir/$item" <<EOF
 [Desktop Entry]
 Version=1.0
@@ -44,7 +44,7 @@ Name=开始菜单
 Name[en]=Start Menu
 Comment=Windows 10 风格开始菜单
 Exec=$BIN
-Icon=win10startmenu
+Icon=metromenu
 Terminal=false
 StartupNotify=false
 Categories=Utility;X-XFCE;
