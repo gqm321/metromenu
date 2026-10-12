@@ -1,0 +1,101 @@
+"""Gtk.Application wrapper for the start menu."""
+
+from __future__ import annotations
+
+import os
+import sys
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
+
+from . import apps as apps_mod  # noqa: E402
+from . import config as config_mod  # noqa: E402
+from .window import StartMenuWindow  # noqa: E402
+
+APP_ID = "org.xfce.win10startmenu"
+STYLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "style.css")
+
+
+class StartMenuApplication(Gtk.Application):
+    def __init__(self):
+        super().__init__(
+            application_id=APP_ID,
+            flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE,
+        )
+        self.registry: apps_mod.AppRegistry | None = None
+        self.config: dict = {}
+        self.window: StartMenuWindow | None = None
+        # Optional screen anchor (x, y, w, h) supplied by the panel plugin.
+        self.anchor: tuple[int, int, int, int] | None = None
+
+    # -- lifecycle ------------------------------------------------------
+    def do_startup(self) -> None:
+        Gtk.Application.do_startup(self)
+        self._load_css()
+        self.set_accels_for_action("app.quit", ["<Primary>q"])
+        quit_action = Gio.SimpleAction.new("quit", None)
+        quit_action.connect("activate", lambda *_: self.quit())
+        self.add_action(quit_action)
+
+    def _load_css(self) -> None:
+        provider = Gtk.CssProvider()
+        try:
+            provider.load_from_path(STYLE_PATH)
+        except GLib.Error as error:
+            print(f"win10startmenu: could not load style sheet: {error}", file=sys.stderr)
+            return
+        screen = Gdk.Screen.get_default()
+        if screen is not None:
+            Gtk.StyleContext.add_provider_for_screen(
+                screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+
+    def do_activate(self) -> None:
+        if self.registry is None:
+            self.registry = apps_mod.AppRegistry()
+        if self.window is None:
+            if not self.config:
+                self.config = config_mod.load([a.desktop_id for a in self.registry.apps])
+            self.window = StartMenuWindow(self, self.registry, self.config)
+            self.window.set_application(self)
+        self.toggle()
+
+    def do_command_line(self, command_line) -> int:
+        for argument in command_line.get_arguments()[1:]:
+            if argument.startswith("--anchor="):
+                self.anchor = _parse_anchor(argument.split("=", 1)[1])
+        self.do_activate()
+        return 0
+
+    def toggle(self) -> None:
+        window = self.window
+        if window is None:
+            return
+        # Only look at visibility: when the panel button is clicked the window
+        # loses focus first, so is_active() would wrongly report it as closed.
+        if window.get_visible():
+            window.request_hide()
+        else:
+            window.show_all()
+            window.present()
+            gdk_window = window.get_window()
+            if gdk_window is not None:
+                gdk_window.focus(Gdk.CURRENT_TIME)
+
+
+def _parse_anchor(value: str) -> tuple[int, int, int, int] | None:
+    try:
+        parts = [int(p) for p in value.split(",")]
+    except ValueError:
+        return None
+    if len(parts) != 4:
+        return None
+    return parts[0], parts[1], parts[2], parts[3]
+
+
+def main(argv: list[str] | None = None) -> int:
+    application = StartMenuApplication()
+    return application.run(argv if argv is not None else sys.argv)

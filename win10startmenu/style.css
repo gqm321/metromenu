@@ -1,0 +1,148 @@
+/* Windows 10 inspired Metro styling for the start menu. */
+
+.start-menu {
+    background-color: alpha(#1b1b1b, 0.96);
+    border: 1px solid alpha(#ffffff, 0.10);
+    border-radius: 4px 4px 0 0;
+    color: #ffffff;
+    font-family: "Segoe UI", "Noto Sans", "Source Han Sans SC", "WenQuanYi Micro Hei", sans-serif;
+    font-size: 12px;
+}
+
+/* ---- left rail ------------------------------------------------------ */
+.rail {
+    background-color: alpha(#000000, 0.22);
+    padding: 6px 0;
+}
+.rail-button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 8px;
+    min-width: 32px;
+    min-height: 32px;
+    color: #f2f2f2;
+    border-radius: 3px;
+}
+.rail-button:hover {
+    background-color: alpha(#ffffff, 0.12);
+}
+.rail-button:active {
+    background-color: alpha(#ffffff, 0.20);
+}
+.rail-separator {
+    background-color: alpha(#ffffff, 0.12);
+    min-height: 1px;
+    margin: 6px 8px;
+}
+
+/* ---- left applications pane ---------------------------------------- */
+.left-pane {
+    background-color: alpha(#000000, 0.10);
+    border-right: 1px solid alpha(#ffffff, 0.06);
+}
+.search-entry {
+    margin: 8px 10px 4px 10px;
+    min-height: 30px;
+    border-radius: 2px;
+    background-color: alpha(#ffffff, 0.94);
+    color: #1b1b1b;
+    border: 1px solid transparent;
+}
+.search-entry:focus {
+    border: 1px solid #0078d7;
+}
+.app-list {
+    background-color: transparent;
+}
+.app-row {
+    padding: 6px 10px;
+}
+.app-row:hover {
+    background-color: alpha(#ffffff, 0.12);
+}
+.app-row:selected,
+.app-row:selected:hover {
+    background-color: #0078d7;
+}
+.app-row-name {
+    color: #ffffff;
+}
+.app-row-comment {
+    color: alpha(#ffffff, 0.60);
+    font-size: 10px;
+}
+.letter-header {
+    color: #0078d7;
+    font-weight: bold;
+    padding: 8px 10px 2px 10px;
+}
+.all-apps-row {
+    color: #0078d7;
+    font-weight: bold;
+}
+.pane-title {
+    color: alpha(#ffffff, 0.75);
+    font-size: 11px;
+    font-weight: bold;
+    padding: 10px 12px 4px 12px;
+}
+
+/* ---- right tile pane ------------------------------------------------ */
+.tiles-pane {
+    background-color: transparent;
+}
+.group-title {
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: normal;
+    padding: 0 2px 6px 4px;
+}
+.tile-title {
+    color: #ffffff;
+    font-size: 11px;
+    text-shadow: 0 1px 2px alpha(#000000, 0.65);
+}
+.tile-subtitle {
+    color: alpha(#ffffff, 0.78);
+    font-size: 9px;
+    text-shadow: 0 1px 2px alpha(#000000, 0.65);
+}
+.tile-empty {
+    color: alpha(#ffffff, 0.45);
+    padding: 24px;
+}
+
+/* ---- scrollbars ----------------------------------------------------- */
+scrollbar {
+    background-color: transparent;
+    border: none;
+}
+scrollbar slider {
+    background-color: alpha(#ffffff, 0.25);
+    border-radius: 3px;
+    min-width: 6px;
+    min-height: 24px;
+}
+scrollbar slider:hover {
+    background-color: alpha(#ffffff, 0.45);
+}
+
+/* ---- power / user menus -------------------------------------------- */
+menu {
+    background-color: #2b2b2b;
+    border: 1px solid alpha(#ffffff, 0.12);
+    color: #ffffff;
+    padding: 4px;
+}
+menuitem {
+    padding: 6px 10px;
+}
+menuitem:hover {
+    background-color: #0078d7;
+}
+separator {
+    background-color: alpha(#ffffff, 0.12);
+    min-height: 1px;
+    margin: 4px;
+}

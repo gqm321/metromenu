@@ -1,0 +1,408 @@
+"""Discovery, search and launching of freedesktop applications.
+
+The module intentionally avoids ``Gio.AppInfo`` for discovery so that the menu
+behaves the same on every desktop: entries are read straight from the XDG
+application directories, which gives us access to categories, keywords and
+desktop actions.  Launching uses ``Gio.Subprocess`` so we can honour ``Path``,
+``Terminal`` and the ``%`` field codes.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import unicodedata
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gio, GLib  # noqa: E402
+
+
+TERMINALS = [
+    "x-terminal-emulator",
+    "xfce4-terminal",
+    "gnome-terminal",
+    "konsole",
+    "alacritty",
+    "kitty",
+    "tilix",
+    "mate-terminal",
+    "lxterminal",
+    "xterm",
+]
+
+# Terminal specific flags used to run a command inside the emulator.
+TERMINAL_EXEC_FLAGS = {
+    "xfce4-terminal": ["-x"],
+    "gnome-terminal": ["--"],
+    "tilix": ["-e"],
+    "konsole": ["-e"],
+    "alacritty": ["-e"],
+    "kitty": [],
+    "mate-terminal": ["-x"],
+    "lxterminal": ["-e"],
+    "x-terminal-emulator": ["-e"],
+    "xterm": ["-e"],
+}
+
+
+def _desktop_dirs() -> list[Path]:
+    dirs: list[Path] = []
+    data_home = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    dirs.append(Path(data_home) / "applications")
+    data_dirs = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
+    for entry in data_dirs.split(":"):
+        if entry:
+            dirs.append(Path(entry) / "applications")
+    return dirs
+
+
+def normalize(text: str) -> str:
+    """Case/diacritic insensitive normalisation used for searching."""
+    if not text:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", text)
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return stripped.casefold()
+
+
+def _clean(value: str | None) -> str:
+    return value.strip() if value else ""
+
+
+@dataclass
+class DesktopAction:
+    key: str
+    name: str
+    exec_: str
+    icon: str = ""
+
+
+@dataclass
+class DesktopApp:
+    desktop_id: str
+    path: Path
+    name: str
+    generic_name: str = ""
+    comment: str = ""
+    icon: str = ""
+    exec_: str = ""
+    terminal: bool = False
+    working_dir: str = ""
+    categories: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+    wm_class: str = ""
+    actions: list[DesktopAction] = field(default_factory=list)
+    dbus_activatable: bool = False
+    startup_notify: bool = False
+
+    # pre-computed search haystacks
+    _search_name: str = field(default="", repr=False)
+    _search_generic: str = field(default="", repr=False)
+    _search_comment: str = field(default="", repr=False)
+    _search_keywords: list[str] = field(default_factory=list, repr=False)
+    _search_exec: str = field(default="", repr=False)
+
+    def __post_init__(self) -> None:
+        self._search_name = normalize(self.name)
+        self._search_generic = normalize(self.generic_name)
+        self._search_comment = normalize(self.comment)
+        self._search_keywords = [normalize(k) for k in self.keywords if k]
+        command = self.exec_.split(" ", 1)[0]
+        self._search_exec = normalize(os.path.basename(command))
+
+    # -- search ---------------------------------------------------------
+    def score(self, query: str) -> int | None:
+        """Return a relevance score (lower is better) or ``None`` if no match."""
+        if not query:
+            return 0
+        norm = query.casefold()
+        best: int | None = None
+
+        def consider(haystack: str, weight: int) -> None:
+            nonlocal best
+            if not haystack:
+                return
+            index = haystack.find(norm)
+            if index < 0:
+                return
+            score = weight + index
+            if index == 0:
+                score -= 100
+            if best is None or score < best:
+                best = score
+
+        consider(self._search_name, 0)
+        consider(self._search_generic, 200)
+        consider(self._search_comment, 300)
+        for keyword in self._search_keywords:
+            consider(keyword, 150)
+        consider(self._search_exec, 400)
+        return best
+
+    def matches(self, query: str) -> bool:
+        return self.score(query) is not None
+
+
+class AppRegistry:
+    """Caches the installed applications and their desktop files."""
+
+    def __init__(self) -> None:
+        self.apps: list[DesktopApp] = []
+        self.by_id: dict[str, DesktopApp] = {}
+        self.reload()
+
+    # -- discovery ------------------------------------------------------
+    def reload(self) -> None:
+        apps: list[DesktopApp] = []
+        seen: set[str] = set()
+        for directory in _desktop_dirs():
+            if not directory.is_dir():
+                continue
+            for path in sorted(directory.rglob("*.desktop")):
+                desktop_id = self._make_id(directory, path)
+                if desktop_id in seen:
+                    continue
+                app = self._parse(desktop_id, path)
+                if app is not None:
+                    seen.add(desktop_id)
+                    apps.append(app)
+        apps.sort(key=lambda a: normalize(a.name))
+        self.apps = apps
+        self.by_id = {app.desktop_id: app for app in apps}
+
+    @staticmethod
+    def _make_id(directory: Path, path: Path) -> str:
+        try:
+            relative = path.relative_to(directory)
+        except ValueError:
+            return path.name
+        # The freedesktop desktop file id keeps the .desktop suffix and uses
+        # dashes instead of directory separators.
+        return str(relative).replace(os.sep, "-")
+
+    def _parse(self, desktop_id: str, path: Path) -> DesktopApp | None:
+        keyfile = GLib.KeyFile()
+        try:
+            keyfile.load_from_file(str(path), GLib.KeyFileFlags.NONE)
+        except GLib.Error:
+            return None
+
+        group = "Desktop Entry"
+        if not keyfile.has_group(group):
+            return None
+
+        def get(key: str, localized: bool = False) -> str:
+            try:
+                if localized:
+                    value = keyfile.get_locale_string(group, key)
+                else:
+                    value = keyfile.get_string(group, key)
+            except GLib.Error:
+                return ""
+            return _clean(value)
+
+        try:
+            if get("Type") != "Application":
+                return None
+        except Exception:
+            return None
+
+        if get("Hidden").lower() == "true":
+            return None
+        if get("NoDisplay").lower() == "true":
+            return None
+
+        only_show = get("OnlyShowIn")
+        if only_show:
+            entries = [e.strip() for e in only_show.split(";") if e.strip()]
+            if entries and "XFCE" not in entries:
+                return None
+        not_show = get("NotShowIn")
+        if not_show:
+            entries = [e.strip() for e in not_show.split(";") if e.strip()]
+            if "XFCE" in entries:
+                return None
+
+        exec_ = get("Exec")
+        if not exec_:
+            return None
+
+        try_exec = get("TryExec")
+        if try_exec and not self._executable_exists(try_exec):
+            return None
+
+        name = get("Name", localized=True) or get("Name")
+        if not name:
+            return None
+
+        keywords = []
+        try:
+            keywords = [k.strip() for k in keyfile.get_string_list(group, "Keywords") if k.strip()]
+        except GLib.Error:
+            pass
+
+        categories = []
+        raw_categories = get("Categories")
+        if raw_categories:
+            categories = [c for c in raw_categories.split(";") if c]
+
+        actions: list[DesktopAction] = []
+        raw_actions = get("Actions")
+        if raw_actions:
+            for action_key in [a for a in raw_actions.split(";") if a]:
+                action_group = f"Desktop Action {action_key}"
+                if not keyfile.has_group(action_group):
+                    continue
+                try:
+                    action_name = keyfile.get_locale_string(action_group, "Name")
+                except GLib.Error:
+                    try:
+                        action_name = keyfile.get_string(action_group, "Name")
+                    except GLib.Error:
+                        action_name = action_key
+                try:
+                    action_exec = keyfile.get_string(action_group, "Exec")
+                except GLib.Error:
+                    continue
+                try:
+                    action_icon = keyfile.get_string(action_group, "Icon")
+                except GLib.Error:
+                    action_icon = ""
+                actions.append(
+                    DesktopAction(
+                        key=action_key,
+                        name=_clean(action_name),
+                        exec_=action_exec,
+                        icon=_clean(action_icon),
+                    )
+                )
+
+        return DesktopApp(
+            desktop_id=desktop_id,
+            path=path,
+            name=name,
+            generic_name=get("GenericName", localized=True) or get("GenericName"),
+            comment=get("Comment", localized=True) or get("Comment"),
+            icon=get("Icon", localized=True) or get("Icon"),
+            exec_=exec_,
+            terminal=get("Terminal").lower() == "true",
+            working_dir=get("Path"),
+            categories=categories,
+            keywords=keywords,
+            wm_class=get("StartupWMClass"),
+            actions=actions,
+            dbus_activatable=get("DBusActivatable").lower() == "true",
+            startup_notify=get("StartupNotify").lower() == "true",
+        )
+
+    @staticmethod
+    def _executable_exists(program: str) -> bool:
+        if os.path.isabs(program):
+            return os.path.exists(program)
+        return shutil.which(program) is not None
+
+    # -- lookup ---------------------------------------------------------
+    def get(self, desktop_id: str) -> DesktopApp | None:
+        return self.by_id.get(desktop_id)
+
+    def search(self, query: str, limit: int | None = None) -> list[DesktopApp]:
+        norm = query.strip()
+        if not norm:
+            return list(self.apps[: limit] if limit else self.apps)
+        scored: list[tuple[int, DesktopApp]] = []
+        for app in self.apps:
+            score = app.score(norm)
+            if score is not None:
+                scored.append((score, app))
+        scored.sort(key=lambda item: (item[0], normalize(item[1].name)))
+        result = [app for _, app in scored]
+        return result[:limit] if limit else result
+
+
+def find_terminal() -> str | None:
+    requested = os.environ.get("TERMINAL")
+    if requested and shutil.which(requested):
+        return requested
+    for candidate in TERMINALS:
+        if shutil.which(candidate):
+            return candidate
+    return None
+
+
+def expand_field_codes(command: str, app: DesktopApp, action: DesktopAction | None = None) -> list[str]:
+    """Expand the freedesktop ``%`` field codes into an argv list."""
+    icon = action.icon if action and action.icon else app.icon
+    name = action.name if action else app.name
+    try:
+        argv = GLib.shell_parse_argv(command)[1]
+    except GLib.Error:
+        return []
+
+    expanded: list[str] = []
+    for token in argv:
+        token = token.replace("%%", "\0")
+        has_icon = "%i" in token
+        token = token.replace("%c", name)
+        token = token.replace("%k", str(app.path))
+        token = token.replace("%i", "")
+        # Files/URLs: the menu launches applications without arguments.
+        for code in ("%f", "%F", "%u", "%U", "%d", "%D", "%n", "%N", "%v", "%m"):
+            token = token.replace(code, "")
+        token = token.replace("\0", "%")
+        if token == "" and not has_icon:
+            continue
+        if has_icon and icon:
+            expanded.extend(["--icon", icon])
+        if token:
+            expanded.append(token)
+    return expanded
+
+
+def _resolve_program(program: str) -> str:
+    """Return an absolute path for ``program`` when it can be found in PATH.
+
+    Newer GLib releases dropped ``G_SUBPROCESS_FLAGS_SEARCH_PATH``, so we do
+    the PATH lookup ourselves before spawning.
+    """
+    if os.path.isabs(program):
+        return program
+    found = shutil.which(program)
+    return found or program
+
+
+def launch(app: DesktopApp, action: DesktopAction | None = None) -> bool:
+    """Spawn the application.  Returns ``True`` when the process started."""
+    command = action.exec_ if action else app.exec_
+    argv = expand_field_codes(command, app, action)
+    if not argv:
+        try:
+            argv = GLib.shell_parse_argv(command)[1]
+        except GLib.Error:
+            return False
+    if not argv:
+        return False
+
+    if action is None and app.terminal:
+        terminal = find_terminal()
+        if terminal:
+            flags = TERMINAL_EXEC_FLAGS.get(os.path.basename(terminal), ["-e"])
+            argv = [terminal, *flags, *argv]
+
+    argv[0] = _resolve_program(argv[0])
+
+    launcher = Gio.SubprocessLauncher.new(
+        Gio.SubprocessFlags.STDOUT_SILENCE
+        | Gio.SubprocessFlags.STDERR_SILENCE
+        | Gio.SubprocessFlags.STDIN_INHERIT
+    )
+    if app.working_dir and os.path.isdir(app.working_dir):
+        launcher.set_cwd(app.working_dir)
+    try:
+        launcher.spawnv(argv)
+    except GLib.Error:
+        return False
+    return True

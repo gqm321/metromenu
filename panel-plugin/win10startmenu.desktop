@@ -1,0 +1,10 @@
+[Xfce Panel]
+Type=X-XFCE-PanelPlugin
+Name=Windows 10 Start Menu
+Name[zh_CN]=开始菜单
+Comment=Windows 10 style start menu
+Comment[zh_CN]=Windows 10 风格的经典开始菜单
+Icon=win10startmenu
+X-XFCE-Module=win10startmenu
+X-XFCE-Internal=false
+X-XFCE-API=2.0

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Launcher for the start menu. Can be used directly from the source tree.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
+if [[ -n "${W10SM_HOME:-}" && -d "${W10SM_HOME}/win10startmenu" ]]; then
+    ROOT="${W10SM_HOME}"
+elif [[ -d "${HERE}/win10startmenu" ]]; then
+    ROOT="${HERE}"
+else
+    ROOT="$(cd "${HERE}/.." && pwd)"
+fi
+
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m win10startmenu "$@"
