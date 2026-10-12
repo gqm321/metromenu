@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import sys
 
+from . import timing  # noqa: E402  (starts the startup timer as early as possible)
+
 import gi
 
 gi.require_version("Gtk", "3.0")
@@ -14,6 +16,8 @@ from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 from . import apps as apps_mod  # noqa: E402
 from . import config as config_mod  # noqa: E402
 from .window import StartMenuWindow  # noqa: E402
+
+timing.log("modules imported")
 
 APP_ID = "org.xfce.win10startmenu"
 STYLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "style.css")
@@ -30,11 +34,13 @@ class StartMenuApplication(Gtk.Application):
         self.window: StartMenuWindow | None = None
         # Optional screen anchor (x, y, w, h) supplied by the panel plugin.
         self.anchor: tuple[int, int, int, int] | None = None
+        self.no_cache = False
 
     # -- lifecycle ------------------------------------------------------
     def do_startup(self) -> None:
         Gtk.Application.do_startup(self)
         self._load_css()
+        timing.log("gtk startup + css")
         self.set_accels_for_action("app.quit", ["<Primary>q"])
         quit_action = Gio.SimpleAction.new("quit", None)
         quit_action.connect("activate", lambda *_: self.quit())
@@ -55,18 +61,22 @@ class StartMenuApplication(Gtk.Application):
 
     def do_activate(self) -> None:
         if self.registry is None:
-            self.registry = apps_mod.AppRegistry()
+            self.registry = apps_mod.AppRegistry(use_cache=not self.no_cache)
+            timing.log(f"registry ready ({len(self.registry.apps)} apps)")
         if self.window is None:
             if not self.config:
                 self.config = config_mod.load([a.desktop_id for a in self.registry.apps])
             self.window = StartMenuWindow(self, self.registry, self.config)
             self.window.set_application(self)
+            timing.log("window built")
         self.toggle()
 
     def do_command_line(self, command_line) -> int:
         for argument in command_line.get_arguments()[1:]:
             if argument.startswith("--anchor="):
                 self.anchor = _parse_anchor(argument.split("=", 1)[1])
+            elif argument == "--no-cache":
+                self.no_cache = True
         self.do_activate()
         return 0
 

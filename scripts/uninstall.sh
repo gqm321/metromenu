@@ -100,6 +100,9 @@ rm -f "$SHARE/icons/hicolor/scalable/apps/win10startmenu.svg"
 find "$HOME/.local" -path "*/xfce4/panel/plugins/libwin10startmenu.so" -delete 2>/dev/null || true
 rm -f "$HOME/.local/share/xfce4/panel/plugins/win10startmenu.desktop"
 
+# Startup caches (application list + rendered icons).
+rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/win10startmenu"
+
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$SHARE/applications" >/dev/null 2>&1 || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t -f "$SHARE/icons/hicolor" >/dev/null 2>&1 || true
 

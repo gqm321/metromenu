@@ -9,8 +9,11 @@ desktop actions.  Launching uses ``Gio.Subprocess`` so we can honour ``Path``,
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +22,17 @@ import gi
 
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gio, GLib  # noqa: E402
+
+
+# Cache of the parsed application list, so a cold start does not have to read
+# and parse every .desktop file again.  The cache stores a fingerprint of the
+# .desktop files (path + mtime + size); whenever software is installed, removed
+# or updated the fingerprint changes and the list is scanned again.  A generous
+# TTL is only a safety net in case a filesystem does not report mtimes.
+CACHE_VERSION = 2
+CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
+_CACHE_HOME = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+CACHE_FILE = Path(_CACHE_HOME) / "win10startmenu" / "apps.json"
 
 
 TERMINALS = [
@@ -60,6 +74,33 @@ def _desktop_dirs() -> list[Path]:
     return dirs
 
 
+def _cache_signature() -> dict:
+    """A cheap fingerprint of every .desktop file plus the current locale.
+
+    Hashing the file list (path + mtime + size) means any install, removal or
+    in-place update of a desktop file invalidates the cache, so a newly
+    installed application shows up the next time the menu opens.  This only
+    stats the files - it never parses them - so it is far cheaper than a full
+    scan.
+    """
+    digest = hashlib.sha1()
+    for directory in _desktop_dirs():
+        if not directory.is_dir():
+            continue
+        try:
+            paths = sorted(directory.rglob("*.desktop"))
+        except OSError:
+            continue
+        for path in paths:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            digest.update(f"{path}\0{stat.st_mtime_ns}\0{stat.st_size}\n".encode("utf-8", "replace"))
+    locale = os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or ""
+    return {"version": CACHE_VERSION, "locale": locale, "files": digest.hexdigest()}
+
+
 def normalize(text: str) -> str:
     """Case/diacritic insensitive normalisation used for searching."""
     if not text:
@@ -79,6 +120,18 @@ class DesktopAction:
     name: str
     exec_: str
     icon: str = ""
+
+    def to_cache(self) -> dict:
+        return {"key": self.key, "name": self.name, "exec": self.exec_, "icon": self.icon}
+
+    @classmethod
+    def from_cache(cls, data: dict) -> "DesktopAction":
+        return cls(
+            key=data.get("key", ""),
+            name=data.get("name", ""),
+            exec_=data.get("exec", ""),
+            icon=data.get("icon", ""),
+        )
 
 
 @dataclass
@@ -113,6 +166,46 @@ class DesktopApp:
         self._search_keywords = [normalize(k) for k in self.keywords if k]
         command = self.exec_.split(" ", 1)[0]
         self._search_exec = normalize(os.path.basename(command))
+
+    # -- (de)serialisation for the on-disk cache ------------------------
+    def to_cache(self) -> dict:
+        return {
+            "desktop_id": self.desktop_id,
+            "path": str(self.path),
+            "name": self.name,
+            "generic_name": self.generic_name,
+            "comment": self.comment,
+            "icon": self.icon,
+            "exec": self.exec_,
+            "terminal": self.terminal,
+            "working_dir": self.working_dir,
+            "categories": self.categories,
+            "keywords": self.keywords,
+            "wm_class": self.wm_class,
+            "actions": [action.to_cache() for action in self.actions],
+            "dbus_activatable": self.dbus_activatable,
+            "startup_notify": self.startup_notify,
+        }
+
+    @classmethod
+    def from_cache(cls, data: dict) -> "DesktopApp":
+        return cls(
+            desktop_id=data.get("desktop_id", ""),
+            path=Path(data.get("path", "")),
+            name=data.get("name", ""),
+            generic_name=data.get("generic_name", ""),
+            comment=data.get("comment", ""),
+            icon=data.get("icon", ""),
+            exec_=data.get("exec", ""),
+            terminal=bool(data.get("terminal", False)),
+            working_dir=data.get("working_dir", ""),
+            categories=list(data.get("categories", [])),
+            keywords=list(data.get("keywords", [])),
+            wm_class=data.get("wm_class", ""),
+            actions=[DesktopAction.from_cache(a) for a in data.get("actions", [])],
+            dbus_activatable=bool(data.get("dbus_activatable", False)),
+            startup_notify=bool(data.get("startup_notify", False)),
+        )
 
     # -- search ---------------------------------------------------------
     def score(self, query: str) -> int | None:
@@ -150,13 +243,22 @@ class DesktopApp:
 class AppRegistry:
     """Caches the installed applications and their desktop files."""
 
-    def __init__(self) -> None:
+    def __init__(self, use_cache: bool = True) -> None:
         self.apps: list[DesktopApp] = []
         self.by_id: dict[str, DesktopApp] = {}
+        self.use_cache = use_cache
         self.reload()
 
     # -- discovery ------------------------------------------------------
     def reload(self) -> None:
+        if self.use_cache and self._load_from_cache():
+            return
+        apps = self._scan()
+        self._set_apps(apps)
+        if self.use_cache:
+            self._save_to_cache(apps)
+
+    def _scan(self) -> list[DesktopApp]:
         apps: list[DesktopApp] = []
         seen: set[str] = set()
         for directory in _desktop_dirs():
@@ -171,8 +273,47 @@ class AppRegistry:
                     seen.add(desktop_id)
                     apps.append(app)
         apps.sort(key=lambda a: normalize(a.name))
+        return apps
+
+    def _set_apps(self, apps: list[DesktopApp]) -> None:
         self.apps = apps
         self.by_id = {app.desktop_id: app for app in apps}
+
+    # -- on-disk cache --------------------------------------------------
+    def _load_from_cache(self) -> bool:
+        try:
+            with CACHE_FILE.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, ValueError):
+            return False
+        if not isinstance(data, dict) or data.get("signature") != _cache_signature():
+            return False
+        created = data.get("created", 0)
+        if time.time() - created > CACHE_TTL_SECONDS:
+            return False
+        try:
+            apps = [DesktopApp.from_cache(item) for item in data.get("apps", [])]
+        except (TypeError, ValueError, KeyError):
+            return False
+        if not apps:
+            return False
+        self._set_apps(apps)
+        return True
+
+    def _save_to_cache(self, apps: list[DesktopApp]) -> None:
+        try:
+            CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = CACHE_FILE.with_suffix(".json.tmp")
+            payload = {
+                "signature": _cache_signature(),
+                "created": time.time(),
+                "apps": [app.to_cache() for app in apps],
+            }
+            with tmp.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False)
+            tmp.replace(CACHE_FILE)
+        except OSError:
+            pass
 
     @staticmethod
     def _make_id(directory: Path, path: Path) -> str:

@@ -17,6 +17,7 @@ from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango  # noqa: E402
 from . import apps as apps_mod  # noqa: E402
 from . import config as config_mod  # noqa: E402
 from . import icons  # noqa: E402
+from . import timing  # noqa: E402
 from .tiles import TileWidget, build_group_grid  # noqa: E402
 
 POWER_ACTIONS = [
@@ -104,12 +105,12 @@ class StartMenuWindow(Gtk.Window):
         self._apply_background()
 
         self._build_ui()
-        self._populate()
 
         self.connect("delete-event", self._on_delete)
         self.connect("focus-out-event", self._on_focus_out)
         self.connect("key-press-event", self._on_key_press)
         self.connect("show", self._on_show)
+        self.connect("map-event", lambda *_: timing.log("window mapped") or False)
 
     # ------------------------------------------------------------------
     # construction
@@ -238,6 +239,7 @@ class StartMenuWindow(Gtk.Window):
     def _populate(self) -> None:
         self._refresh_app_list()
         self._refresh_tiles()
+        timing.log("populated")
 
     def _default_pinned(self) -> list[str]:
         pinned = [pid for pid in self.config.get("pinned", []) if self.registry.get(pid)]
@@ -680,7 +682,11 @@ class StartMenuWindow(Gtk.Window):
         self.query = ""
         self.search.set_text("")
         self.menu_button.set_tooltip_text("所有应用")
-        self._populate()
+        # Populate after the window has been mapped so the first paint is
+        # immediate (the rail, search box and empty panes appear at once, the
+        # lists and tiles fill in a moment later).  This mirrors the way
+        # Whisker Menu loads its contents asynchronously.
+        GLib.idle_add(self._populate)
         GLib.idle_add(self.search.grab_focus)
 
     def _position(self) -> None:
