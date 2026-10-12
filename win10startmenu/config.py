@@ -136,6 +136,7 @@ def default_config(available_ids: list[str] | None = None) -> dict:
         "tiles": _default_tiles(available_ids or []),
         "show_recent": True,
         "keep_alive": False,
+        "hidden": [],
     }
 
 

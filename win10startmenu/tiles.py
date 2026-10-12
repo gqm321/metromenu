@@ -65,6 +65,7 @@ class TileWidget(Gtk.EventBox):
         self.kind = tile["id"][1:] if tile["id"].startswith("@") else "app"
         self._base_color = tile.get("color") or "#0078d7"
         self._live_source = 0
+        self.live_enabled = bool(tile.get("live", True))
         self._provider = Gtk.CssProvider()
 
         width, height = tile_pixels(tile.get("size", "medium"))
@@ -130,10 +131,23 @@ class TileWidget(Gtk.EventBox):
         self.connect("enter-notify-event", self._on_enter)
         self.connect("leave-notify-event", self._on_leave)
 
-        if self.kind in ("clock", "date", "system"):
+        if self.kind in ("clock", "date", "system") and self.live_enabled:
             self._start_live()
 
     # -- helpers --------------------------------------------------------
+    def is_live(self) -> bool:
+        return self.kind in ("clock", "date", "system")
+
+    def set_live(self, enabled: bool) -> None:
+        self.live_enabled = enabled
+        if enabled:
+            if not self._live_source:
+                self._start_live()
+        else:
+            self.stop()
+            self._title.set_text(self._display_name())
+            self._subtitle.hide()
+
     def _icon_name(self) -> str:
         if self.kind in SPECIAL_ICONS:
             return SPECIAL_ICONS["@" + self.kind]

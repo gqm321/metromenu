@@ -14,6 +14,7 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango  # noqa: E402
 
+from . import actions as actions_mod  # noqa: E402
 from . import apps as apps_mod  # noqa: E402
 from . import config as config_mod  # noqa: E402
 from . import icons  # noqa: E402
@@ -28,6 +29,24 @@ POWER_ACTIONS = [
     ("重启", "RESTART"),
     ("关机", "SHUTDOWN"),
 ]
+
+# Human readable names for the Metro palette (used by the tile colour menu).
+COLOR_NAMES = {
+    "#0078d7": "蓝色",
+    "#2d7d9a": "灰蓝",
+    "#00aba9": "青色",
+    "#2d89ef": "亮蓝",
+    "#1e7145": "墨绿",
+    "#da532c": "砖红",
+    "#b91d47": "玫红",
+    "#6a00ff": "紫色",
+    "#d24726": "橙色",
+    "#8c0095": "深紫",
+    "#008a00": "绿色",
+    "#0050ef": "宝蓝",
+    "#a20025": "深红",
+    "#647687": "石板灰",
+}
 
 
 def _run(argv: list[str]) -> None:
@@ -211,6 +230,9 @@ class StartMenuWindow(Gtk.Window):
         self.app_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.app_list.set_activate_on_single_click(True)
         self.app_list.connect("row-activated", self._on_row_activated)
+        # Right-click is handled on the list itself: rows have no GdkWindow of
+        # their own, so their own button-press handlers never fire.
+        self.app_list.connect("button-press-event", self._on_list_button_press)
         scrolled.add(self.app_list)
         pane.pack_start(scrolled, True, True, 0)
         return pane
@@ -241,18 +263,33 @@ class StartMenuWindow(Gtk.Window):
         self._refresh_tiles()
         timing.log("populated")
 
+    def _hidden_ids(self) -> set[str]:
+        return set(self.config.get("hidden", []))
+
+    def _is_hidden(self, desktop_id: str) -> bool:
+        return desktop_id in self._hidden_ids()
+
+    def _visible_apps(self) -> list[apps_mod.DesktopApp]:
+        hidden = self._hidden_ids()
+        return [app for app in self.registry.apps if app.desktop_id not in hidden]
+
     def _default_pinned(self) -> list[str]:
-        pinned = [pid for pid in self.config.get("pinned", []) if self.registry.get(pid)]
+        hidden = self._hidden_ids()
+        pinned = [
+            pid
+            for pid in self.config.get("pinned", [])
+            if self.registry.get(pid) and pid not in hidden
+        ]
         if pinned:
             return pinned
         result = []
         for candidate in config_mod.DEFAULT_TILE_CANDIDATES:
-            if self.registry.get(candidate):
+            if self.registry.get(candidate) and candidate not in hidden:
                 result.append(candidate)
             if len(result) >= 8:
                 break
         if not result:
-            result = [app.desktop_id for app in self.registry.apps[:8]]
+            result = [app.desktop_id for app in self._visible_apps()[:8]]
         return result
 
     def _clear_list(self) -> None:
@@ -262,7 +299,12 @@ class StartMenuWindow(Gtk.Window):
     def _refresh_app_list(self) -> None:
         self._clear_list()
         if self.query:
-            results = self.registry.search(self.query, limit=200)
+            hidden = self._hidden_ids()
+            results = [
+                app
+                for app in self.registry.search(self.query, limit=200)
+                if app.desktop_id not in hidden
+            ]
             if not results:
                 self.app_list.add(self._message_row("无匹配结果"))
             for app in results:
@@ -274,7 +316,7 @@ class StartMenuWindow(Gtk.Window):
             self.app_list.add(self._back_row())
             self.app_list.add(self._pane_title("所有应用"))
             current_letter = None
-            for app in self.registry.apps:
+            for app in self._visible_apps():
                 letter = self._letter_of(app.name)
                 if letter != current_letter:
                     current_letter = letter
@@ -378,7 +420,6 @@ class StartMenuWindow(Gtk.Window):
         row.add(box)
 
         row.app = app
-        row.connect("button-press-event", self._on_row_button_press)
         return row
 
     def _refresh_tiles(self) -> None:
@@ -389,13 +430,24 @@ class StartMenuWindow(Gtk.Window):
             self.tiles_box.remove(child)
 
         tiles = self.config.get("tiles", [])
+        hidden = self._hidden_ids()
+
+        def tile_app(tile: dict):
+            if tile["id"].startswith("@"):
+                return None
+            app = self.registry.get(tile["id"])
+            if app is None or app.desktop_id in hidden:
+                return None
+            return app
+
+        # Drop tiles whose application is not installed or is hidden.
+        tiles = [t for t in tiles if t["id"].startswith("@") or tile_app(t) is not None]
+
         if self.query:
             filtered = []
             for tile in tiles:
-                app = self.registry.get(tile["id"]) if not tile["id"].startswith("@") else None
-                if app is None:
-                    continue
-                if app.matches(self.query):
+                app = tile_app(tile)
+                if app is not None and app.matches(self.query):
                     filtered.append(tile)
             tiles = filtered
 
@@ -516,32 +568,166 @@ class StartMenuWindow(Gtk.Window):
         return True
 
     # -- context menus --------------------------------------------------
-    def _on_row_button_press(self, row: Gtk.ListBoxRow, event: Gdk.EventButton) -> bool:
+    def _on_list_button_press(self, _listbox, event: Gdk.EventButton) -> bool:
         if event.button != 3:
             return False
-        app = getattr(row, "app", None)
+        row = self.app_list.get_row_at_y(int(event.y))
+        app = getattr(row, "app", None) if row is not None else None
         if app is None:
             return False
-        menu = Gtk.Menu()
-        launch_item = Gtk.MenuItem(label="打开")
-        launch_item.connect("activate", lambda _i: self._launch_app(app))
-        menu.append(launch_item)
-
-        pin_item = Gtk.MenuItem(label="固定到“开始”屏幕")
-        pin_item.set_sensitive(not self._is_pinned(app.desktop_id))
-        pin_item.connect("activate", lambda _i: self._pin_tile(app))
-        menu.append(pin_item)
-
-        if app.actions:
-            menu.append(Gtk.SeparatorMenuItem())
-            for action in app.actions:
-                item = Gtk.MenuItem(label=action.name)
-                item.connect("activate", lambda _i, a=action: self._launch_app(app, a))
-                menu.append(item)
-
+        menu = self._build_app_menu(app)
         menu.show_all()
         menu.popup_at_pointer(event)
         return True
+
+    @staticmethod
+    def _menu_item(label: str, callback=None, sensitive: bool = True) -> Gtk.MenuItem:
+        item = Gtk.MenuItem(label=label)
+        if callback is not None:
+            item.connect("activate", lambda _i: callback())
+        item.set_sensitive(sensitive)
+        return item
+
+    def _build_app_menu(self, app, tile_widget: TileWidget | None = None) -> Gtk.Menu:
+        menu = Gtk.Menu()
+
+        if app is not None:
+            menu.append(self._menu_item("打开", lambda: self._launch_app(app)))
+
+        if tile_widget is not None:
+            menu.append(self._size_menu(tile_widget))
+            menu.append(self._color_menu(tile_widget))
+            menu.append(self._group_menu(tile_widget))
+            if tile_widget.is_live():
+                menu.append(self._live_menu(tile_widget))
+            menu.append(self._menu_item("置顶", lambda: self._move_tile_to_front(tile_widget)))
+
+        if app is not None and app.actions:
+            actions_item = Gtk.MenuItem(label="操作")
+            submenu = Gtk.Menu()
+            for action in app.actions:
+                item = Gtk.MenuItem(label=action.name)
+                item.connect("activate", lambda _i, a=action: self._launch_app(app, a))
+                submenu.append(item)
+            actions_item.set_submenu(submenu)
+            menu.append(actions_item)
+
+        menu.append(Gtk.SeparatorMenuItem())
+
+        if tile_widget is not None:
+            menu.append(self._menu_item("从“开始”屏幕取消固定", lambda: self._unpin_tile(tile_widget)))
+        elif app is not None:
+            if self._is_pinned(app.desktop_id):
+                menu.append(self._menu_item("从“开始”屏幕取消固定", lambda: self._unpin_app(app)))
+            else:
+                menu.append(self._menu_item("固定到“开始”屏幕", lambda: self._pin_tile(app)))
+            menu.append(self._menu_item("置顶", lambda: self._move_to_top(app)))
+
+        if app is not None:
+            menu.append(Gtk.SeparatorMenuItem())
+            menu.append(self._menu_item("打开文件位置", lambda: actions_mod.reveal_file(app.path)))
+            menu.append(self._menu_item("编辑菜单项", lambda: actions_mod.edit_file(app.path)))
+            menu.append(self._menu_item("复制启动命令", lambda: self._copy_command(app)))
+            menu.append(self._menu_item("添加到桌面", lambda: actions_mod.add_to_desktop(app.path)))
+            menu.append(self._menu_item("添加到面板", lambda: self._add_to_panel(app)))
+
+            menu.append(Gtk.SeparatorMenuItem())
+            hidden = self._is_hidden(app.desktop_id)
+            menu.append(
+                self._menu_item(
+                    "取消隐藏" if hidden else "隐藏此应用",
+                    lambda: self._toggle_hidden(app),
+                )
+            )
+
+        return menu
+
+    def _size_menu(self, widget: TileWidget) -> Gtk.MenuItem:
+        item = Gtk.MenuItem(label="调整大小")
+        submenu = Gtk.Menu()
+        current = widget.tile.get("size", "medium")
+        for size, label in (("small", "小"), ("medium", "中"), ("wide", "宽"), ("large", "大")):
+            entry = Gtk.CheckMenuItem(label=label)
+            entry.set_active(size == current)
+            entry.connect("activate", lambda _i, s=size: self._resize_tile(widget, s))
+            submenu.append(entry)
+        item.set_submenu(submenu)
+        return item
+
+    @staticmethod
+    def _color_swatch(color: str, size: int = 14) -> Gtk.Image:
+        pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, size, size)
+        rgba = Gdk.RGBA()
+        if rgba.parse(color):
+            pixel = (
+                (int(rgba.red * 255) << 24)
+                | (int(rgba.green * 255) << 16)
+                | (int(rgba.blue * 255) << 8)
+                | 0xFF
+            )
+            pixbuf.fill(pixel)
+        return Gtk.Image.new_from_pixbuf(pixbuf)
+
+    def _color_menu(self, widget: TileWidget) -> Gtk.MenuItem:
+        item = Gtk.MenuItem(label="更改颜色")
+        submenu = Gtk.Menu()
+        current = (widget.tile.get("color") or "").lower()
+        for color in config_mod.PALETTE:
+            name = COLOR_NAMES.get(color.lower(), color)
+            entry = Gtk.MenuItem()
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            box.pack_start(self._color_swatch(color), False, False, 0)
+            label = Gtk.Label(label=name, xalign=0.0)
+            if color.lower() == current:
+                label.set_markup(f"<b>{name}</b>")
+            box.pack_start(label, True, True, 0)
+            entry.add(box)
+            entry.connect("activate", lambda _i, c=color: self._recolor_tile(widget, c))
+            submenu.append(entry)
+        submenu.append(Gtk.SeparatorMenuItem())
+        custom = Gtk.MenuItem(label="自定义颜色…")
+        custom.connect("activate", lambda _i: self._choose_custom_color(widget))
+        submenu.append(custom)
+        item.set_submenu(submenu)
+        return item
+
+    def _choose_custom_color(self, widget: TileWidget) -> None:
+        dialog = Gtk.ColorChooserDialog(title="选择磁贴颜色", transient_for=self, modal=True)
+        tile = self._find_tile(widget)
+        if tile and tile.get("color"):
+            rgba = Gdk.RGBA()
+            if rgba.parse(tile["color"]):
+                dialog.set_rgba(rgba)
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            self._recolor_tile(widget, dialog.get_rgba().to_string())
+        dialog.destroy()
+
+    def _group_menu(self, widget: TileWidget) -> Gtk.MenuItem:
+        item = Gtk.MenuItem(label="移动到分组")
+        submenu = Gtk.Menu()
+        current = widget.tile.get("group", "")
+        for group in self.config.get("groups", []):
+            entry = Gtk.CheckMenuItem(label=group or "未分组")
+            entry.set_active(group == current)
+            entry.connect("activate", lambda _i, g=group: self._regroup_tile(widget, g))
+            submenu.append(entry)
+        item.set_submenu(submenu)
+        return item
+
+    def _live_menu(self, widget: TileWidget) -> Gtk.MenuItem:
+        item = Gtk.MenuItem(label="实时磁贴")
+        submenu = Gtk.Menu()
+        on = Gtk.CheckMenuItem(label="开启")
+        off = Gtk.CheckMenuItem(label="关闭")
+        on.set_active(widget.live_enabled)
+        off.set_active(not widget.live_enabled)
+        on.connect("activate", lambda _i: self._set_tile_live(widget, True))
+        off.connect("activate", lambda _i: self._set_tile_live(widget, False))
+        submenu.append(on)
+        submenu.append(off)
+        item.set_submenu(submenu)
+        return item
 
     def _is_pinned(self, desktop_id: str) -> bool:
         return any(tile["id"] == desktop_id for tile in self.config.get("tiles", []))
@@ -554,48 +740,72 @@ class StartMenuWindow(Gtk.Window):
         tiles.append({"id": app.desktop_id, "size": "medium", "group": group, "color": color})
         config_mod.save(self.config)
         self._refresh_tiles()
+        self._refresh_app_list()
+
+    def _unpin_app(self, app: apps_mod.DesktopApp) -> None:
+        self.config["tiles"] = [
+            tile for tile in self.config.get("tiles", []) if tile["id"] != app.desktop_id
+        ]
+        config_mod.save(self.config)
+        self._refresh_tiles()
+        self._refresh_app_list()
+
+    def _copy_command(self, app: apps_mod.DesktopApp) -> None:
+        actions_mod.copy_text(app.exec_)
+
+    def _add_to_panel(self, app: apps_mod.DesktopApp) -> None:
+        actions_mod.add_launcher_to_panel(app.path)
+
+    def _toggle_hidden(self, app: apps_mod.DesktopApp) -> None:
+        hidden = set(self.config.get("hidden", []))
+        if app.desktop_id in hidden:
+            hidden.discard(app.desktop_id)
+        else:
+            hidden.add(app.desktop_id)
+        self.config["hidden"] = sorted(hidden)
+        config_mod.save(self.config)
+        self._refresh_app_list()
+        self._refresh_tiles()
+
+    def _unhide_all(self) -> None:
+        if not self.config.get("hidden"):
+            return
+        self.config["hidden"] = []
+        config_mod.save(self.config)
+        self._refresh_app_list()
+        self._refresh_tiles()
+
+    def _move_to_top(self, app: apps_mod.DesktopApp) -> None:
+        pinned = list(self.config.get("pinned") or self._default_pinned())
+        if app.desktop_id in pinned:
+            pinned.remove(app.desktop_id)
+        pinned.insert(0, app.desktop_id)
+        self.config["pinned"] = pinned
+        config_mod.save(self.config)
+        self._refresh_app_list()
+
+    def _move_tile_to_front(self, widget: TileWidget) -> None:
+        tiles = self.config.get("tiles", [])
+        tile = self._find_tile(widget)
+        if tile is None:
+            return
+        group = tile.get("group", "")
+        others = [t for t in tiles if t is not tile]
+        index = next((i for i, t in enumerate(others) if t.get("group", "") == group), len(others))
+        others.insert(index, tile)
+        self.config["tiles"] = others
+        config_mod.save(self.config)
+        self._refresh_tiles()
+
+    def _set_tile_live(self, widget: TileWidget, enabled: bool) -> None:
+        tile = self._find_tile(widget)
+        if tile is not None:
+            tile["live"] = enabled
+            config_mod.save(self.config)
+            self._refresh_tiles()
 
     def _on_tile_context(self, widget: TileWidget, event: Gdk.EventButton) -> None:
-        menu = Gtk.Menu()
-
-        if widget.app is not None:
-            open_item = Gtk.MenuItem(label="打开")
-            open_item.connect("activate", lambda _i: self._launch_app(widget.app))
-            menu.append(open_item)
-
-        size_item = Gtk.MenuItem(label="调整大小")
-        size_menu = Gtk.Menu()
-        for size, label in (("small", "小"), ("medium", "中"), ("wide", "宽"), ("large", "大")):
-            item = Gtk.MenuItem(label=label)
-            item.connect("activate", lambda _i, s=size: self._resize_tile(widget, s))
-            size_menu.append(item)
-        size_item.set_submenu(size_menu)
-        menu.append(size_item)
-
-        color_item = Gtk.MenuItem(label="更改颜色")
-        color_menu = Gtk.Menu()
-        for color in config_mod.PALETTE:
-            item = Gtk.MenuItem(label=color)
-            item.connect("activate", lambda _i, c=color: self._recolor_tile(widget, c))
-            color_menu.append(item)
-        color_item.set_submenu(color_menu)
-        menu.append(color_item)
-
-        if widget.app is not None:
-            group_item = Gtk.MenuItem(label="移动到分组")
-            group_menu = Gtk.Menu()
-            for group in self.config.get("groups", []):
-                item = Gtk.MenuItem(label=group or "未分组")
-                item.connect("activate", lambda _i, g=group: self._regroup_tile(widget, g))
-                group_menu.append(item)
-            group_item.set_submenu(group_menu)
-            menu.append(group_item)
-
-            menu.append(Gtk.SeparatorMenuItem())
-            unpin = Gtk.MenuItem(label="从“开始”屏幕取消固定")
-            unpin.connect("activate", lambda _i: self._unpin_tile(widget))
-            menu.append(unpin)
-
+        menu = self._build_app_menu(widget.app, widget)
         menu.show_all()
         menu.popup_at_pointer(event)
 
@@ -657,6 +867,10 @@ class StartMenuWindow(Gtk.Window):
         settings.connect("activate", lambda _i: self._open_account_settings())
         menu.append(Gtk.SeparatorMenuItem())
         menu.append(settings)
+        if self.config.get("hidden"):
+            restore = Gtk.MenuItem(label="恢复隐藏的应用")
+            restore.connect("activate", lambda _i: self._unhide_all())
+            menu.append(restore)
         menu.show_all()
         menu.popup_at_widget(button, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
 
