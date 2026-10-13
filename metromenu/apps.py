@@ -23,6 +23,8 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
+from . import desktop  # noqa: E402
+
 
 # Cache of the parsed application list, so a cold start does not have to read
 # and parse every .desktop file again.  The cache stores a fingerprint of the
@@ -37,6 +39,7 @@ CACHE_FILE = Path(_CACHE_HOME) / "metromenu" / "apps.json"
 
 TERMINALS = [
     "x-terminal-emulator",
+    "qterminal",
     "xfce4-terminal",
     "gnome-terminal",
     "konsole",
@@ -50,6 +53,7 @@ TERMINALS = [
 
 # Terminal specific flags used to run a command inside the emulator.
 TERMINAL_EXEC_FLAGS = {
+    "qterminal": ["-e"],
     "xfce4-terminal": ["-x"],
     "gnome-terminal": ["--"],
     "tilix": ["-e"],
@@ -357,16 +361,22 @@ class AppRegistry:
         if get("NoDisplay").lower() == "true":
             return None
 
-        only_show = get("OnlyShowIn")
-        if only_show:
-            entries = [e.strip() for e in only_show.split(";") if e.strip()]
-            if entries and "XFCE" not in entries:
-                return None
-        not_show = get("NotShowIn")
-        if not_show:
-            entries = [e.strip() for e in not_show.split(";") if e.strip()]
-            if "XFCE" in entries:
-                return None
+        # Honour OnlyShowIn / NotShowIn against the *running* desktop instead
+        # of assuming Xfce, so the menu also works on LXQt and friends.  When
+        # the session does not advertise a desktop name we skip the filter
+        # rather than hiding everything.
+        desktops = desktop.current_desktops()
+        if desktops:
+            only_show = get("OnlyShowIn")
+            if only_show:
+                entries = {e.strip().upper() for e in only_show.split(";") if e.strip()}
+                if entries and not (entries & desktops):
+                    return None
+            not_show = get("NotShowIn")
+            if not_show:
+                entries = {e.strip().upper() for e in not_show.split(";") if e.strip()}
+                if entries & desktops:
+                    return None
 
         exec_ = get("Exec")
         if not exec_:

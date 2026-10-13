@@ -5,9 +5,20 @@ from __future__ import annotations
 import os
 import sys
 
+from . import desktop as desktop_mod  # stdlib only - must precede "import gi"
 from . import timing  # noqa: E402  (starts the startup timer as early as possible)
 
-import gi
+# GDK latches GDK_SCALE the moment its typelib is imported, so the scale has to
+# be chosen *before* ``import gi``.  GTK only auto-selects an integer HiDPI
+# scale from the Gdk/WindowScalingFactor XSETTINGS value; LXQt has no XSETTINGS
+# daemon and advertises its scaling through Xft.dpi instead, so without this the
+# menu would render at 1x on a 2x screen (i.e. at half size).
+if not os.environ.get("GDK_SCALE"):
+    _scale = desktop_mod.detect_scale()
+    if _scale > 1:
+        os.environ["GDK_SCALE"] = str(_scale)
+
+import gi  # noqa: E402
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
