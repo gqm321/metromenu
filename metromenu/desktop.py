@@ -8,6 +8,7 @@ other freedesktop desktop) by looking at the running session at runtime.
 
 from __future__ import annotations
 
+import functools
 import os
 import shutil
 import subprocess
@@ -56,8 +57,13 @@ def first_available(candidates: list[list[str]] | None) -> list[str] | None:
     return None
 
 
+@functools.lru_cache(maxsize=1)
 def session_dpi() -> float:
-    """The DPI the session advertises through the ``Xft.dpi`` X resource."""
+    """The DPI the session advertises through the ``Xft.dpi`` X resource.
+
+    The result is cached: querying it spawns ``xrdb``, and the resource does
+    not change while the menu process lives.
+    """
     try:
         result = subprocess.run(
             ["xrdb", "-query"], capture_output=True, text=True, timeout=2
